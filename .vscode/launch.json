@@ -1,0 +1,16 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "node",
+      "request": "launch",
+      "name": "Parse SOAP",
+      "skipFiles": ["<node_internals>/**"],
+      "program": "${workspaceFolder}/src/soap-parser.ts",
+      "preLaunchTask": "tsc: build - tsconfig.json",
+      "outFiles": ["${workspaceFolder}/dist/**/*.js"],
+      "args": ["${workspaceFolder}/docs/input.docx"],
+      "cwd": "${workspaceFolder}"
+    }
+  ]
+}

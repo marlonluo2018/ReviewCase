@@ -1,0 +1,36 @@
+{
+  "name": "reviewcase",
+  "version": "1.0.0",
+  "type": "commonjs",
+  "main": "index.js",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w",
+    "lint": "eslint src --ext .ts",
+    "lint:fix": "eslint src --ext .ts --fix"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^22.14.0",
+    "eslint": "^9.24.0",
+    "eslint-config-prettier": "^10.1.1",
+    "eslint-plugin-prettier": "^5.2.6",
+    "prettier": "^3.5.3",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.8.3"
+  },
+  "dependencies": {
+    "@lmstudio/sdk": "^1.1.0",
+    "docx": "^9.3.0",
+    "mammoth": "^1.9.0",
+    "officeparser": "^5.1.1",
+    "ollama": "^0.5.14",
+    "openai": "^4.93.0"
+  },
+  "directories": {
+    "doc": "docs"
+  },
+  "description": ""
+}
