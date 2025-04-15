@@ -94,7 +94,7 @@
 
 ```bash
 git clone https://github.com/marlonluo2018/ReviewCase.git
-cd soap-processor
+cd ReviewCase
 ```
 
 2. 安装所有依赖：
