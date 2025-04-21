@@ -1,7 +1,7 @@
 // src/soap-parser.ts
-const path = require('path');
-const fs = require('fs');
-const mammoth = require('mammoth');
+import path from "path";
+import fs from "fs";
+import mammoth from "mammoth";
 
 interface SOAPNote {
   Subjective: string;
@@ -10,148 +10,121 @@ interface SOAPNote {
   Plan: string;
 }
 
-type SOAPSection = keyof SOAPNote; // "Subjective" | "Objective" | "Assessment" | "Plan"
+interface ParsedSOAPFile {
+  filename: string;
+  sections: SOAPNote;
+  diagnosis: string;
+}
 
-// 确保__dirname在CommonJS中可用
-const getDirname = () =>
-  path.dirname(require.main?.filename || process.mainModule?.filename || __dirname);
+function getDocsDir(): string {
+  return path.join(__dirname, "../docs");
+}
 
-function parseSOAPFromWord(text: string): Record<SOAPSection, string[]> {
-  const soap: Record<string, string[]> = {
-    Subjective: [],
-    Objective: [],
-    Assessment: [],
-    Plan: [],
+function parseSOAPText(text: string): Record<keyof SOAPNote, string[]> {
+  // 定义所有可能的段落开始标记（支持多种格式）
+  const sectionPatterns = [
+    {
+      regex:
+        /(主观资料S|S——|S\s*[:：])\s*(.*?)(?=(客观资料O|O——|O\s*[:：]|评价A|A——|A\s*[:：]|处置计划P|P——|P\s*[:：]|$))/s,
+      section: "Subjective" as const,
+    },
+    {
+      regex:
+        /(客观资料O|O——|O\s*[:：])\s*(.*?)(?=(评价A|A——|A\s*[:：]|处置计划P|P——|P\s*[:：]|$))/s,
+      section: "Objective" as const,
+    },
+    {
+      regex: /(评价A|A——|A\s*[:：])\s*(.*?)(?=(处置计划P|P——|P\s*[:：]|$))/s,
+      section: "Assessment" as const,
+    },
+    {
+      regex: /(处置计划P|P——|P\s*[:：])\s*(.*)/s,
+      section: "Plan" as const,
+    },
+  ];
+
+  const result = {
+    Subjective: [] as string[],
+    Objective: [] as string[],
+    Assessment: [] as string[],
+    Plan: [] as string[],
   };
 
-  let currentSection: SOAPSection | null = null;
+  // 处理文档开头可能没有标记的内容
+  const firstSectionMatch = text.match(
+    /^(.*?)(?=(主观资料S|S——|S\s*[:：]|客观资料O|O——|O\s*[:：]|评价A|A——|A\s*[:：]|处置计划P|P——|P\s*[:：]|$))/s
+  );
+  if (firstSectionMatch && firstSectionMatch[1].trim()) {
+    result.Subjective.push(firstSectionMatch[1].trim());
+  }
 
-  const lines = text.split('\n');
-
-  for (const line of lines) {
-    const trimmedLine = line.trim();
-    if (!trimmedLine) continue;
-
-    // 检查是否是新的 SOAP 段落标记
-    const firstChar = trimmedLine[0].toUpperCase();
-    if (['S', 'O', 'A', 'P'].includes(firstChar)) {
-      const isSectionMarker = trimmedLine.length === 1 || /^[SOAP][\s:：，。]/.test(trimmedLine);
-
-      if (isSectionMarker) {
-        currentSection = {
-          S: 'Subjective',
-          O: 'Objective',
-          A: 'Assessment',
-          P: 'Plan',
-        }[firstChar] as SOAPSection;
-
-        const content = trimmedLine.slice(1).trim();
-        if (content) {
-          soap[currentSection].push(content);
-        }
-        continue;
-      }
-    }
-
-    // 如果不是新段落标记，则添加到当前段落
-    if (currentSection) {
-      soap[currentSection].push(trimmedLine);
+  // 使用正则表达式提取各段落内容
+  for (const { regex, section } of sectionPatterns) {
+    const match = text.match(regex);
+    if (match && match[2]) {
+      result[section].push(match[2].trim());
     }
   }
 
-  return soap;
+  return result;
 }
 
-function extractSection(text: string, title: string): string | null {
-  // 创建不区分大小写的正则表达式
-  const regex = new RegExp(`${title}[：:]\s*([\\s\\S]*?)(?=\\n\\n|${title}|$)`, 'i');
-  const match = text.match(regex);
-  return match ? match[1].trim() : null;
-}
+function extractDiagnosis(text: string): string {
+  // 尝试提取明确的诊断信息
+  const diagnosisPatterns = [
+    /诊断[：:]\s*(.*?)(?=\n|$)/,
+    /中医诊断[：:]\s*(.*?)(?=\n|$)/,
+    /西医诊断[：:]\s*(.*?)(?=\n|$)/,
+  ];
 
-// 辅助函数：智能查找诊断信息
-function findDiagnosis(text: string): string {
-  const diagnosisKeywords = ['诊断', '考虑', '印象', '初步意见'];
-  for (const keyword of diagnosisKeywords) {
-    const section = extractSection(text, keyword);
-    if (section) return section;
+  for (const pattern of diagnosisPatterns) {
+    const match = text.match(pattern);
+    if (match) return match[1].trim();
   }
-  return '未明确诊断';
-}
 
-async function main() {
-  try {
-    const docsDir = path.join(getDirname(), '../docs');
-    const files = fs.readdirSync(docsDir);
-    const docxFiles = files.filter((f: string) => /\.docx?$/i.test(f)); // 获取所有.docx文件
-
-    if (docxFiles.length === 0) throw new Error('docs目录下未找到.docx文件');
-
-    // 遍历并解析每个文件
-    for (const docxFile of docxFiles) {
-      const filePath = path.join(docsDir, docxFile);
-      const { value: text } = await mammoth.extractRawText({ path: filePath });
-      const result = parseSOAPFromWord(text);
-      console.log(`文件 ${docxFile} 的解析结果:`, result);
-    }
-  } catch (error) {
-    if (error instanceof Error) {
-      console.error('发生错误:', error.message);
-    } else {
-      console.error('未知错误:', error);
-    }
+  // 尝试提取其他可能的诊断信息
+  const keywords = ["考虑", "印象", "初步意见"];
+  for (const keyword of keywords) {
+    const match = text.match(new RegExp(`${keyword}[：:](.*?)(?=\\n|$)`));
+    if (match) return match[1].trim();
   }
+
+  return "未明确诊断";
 }
 
-export async function parseSOAPFiles(): Promise<
-  Array<{
-    filename: string;
-    sections: SOAPNote;
-  }>
-> {
-  try {
-    const docsDir = path.join(getDirname(), '../docs');
-    const files = fs.readdirSync(docsDir);
-    const docxFiles = files.filter((f: string) => /\.docx?$/i.test(f));
+export async function parseSOAPFiles(): Promise<ParsedSOAPFile[]> {
+  const docsDir = getDocsDir();
+  const files = fs.readdirSync(docsDir).filter((f) => /\.docx?$/i.test(f));
 
-    if (docxFiles.length === 0) {
-      throw new Error('docs目录下未找到.docx文件');
-    }
-
-    const results: Array<{ filename: string; sections: SOAPNote }> = [];
-    for (const docxFile of docxFiles) {
-      const filePath = path.join(docsDir, docxFile);
-      const { value: text } = await mammoth.extractRawText({ path: filePath });
-      const sections = parseSOAPFromWord(text);
-
-      results.push({
-        filename: docxFile,
-        sections: {
-          Subjective: sections.Subjective.join('\n'),
-          Objective: sections.Objective.join('\n'),
-          Assessment: sections.Assessment.join('\n'),
-          Plan: sections.Plan.join('\n'),
-        },
-      });
-    }
-
-    return results;
-  } catch (error) {
-    if (error instanceof Error) {
-      console.error('发生错误:', error.message);
-    } else {
-      console.error('未知错误:', error);
-    }
-    throw error;
+  if (files.length === 0) {
+    throw new Error("未找到任何.docx文件");
   }
+
+  const results: ParsedSOAPFile[] = [];
+
+  for (const file of files) {
+    const filePath = path.join(docsDir, file);
+    const { value: text } = await mammoth.extractRawText({ path: filePath });
+    const sections = parseSOAPText(text);
+
+    results.push({
+      filename: file,
+      sections: {
+        Subjective: sections.Subjective.join("\n"),
+        Objective: sections.Objective.join("\n"),
+        Assessment: sections.Assessment.join("\n"),
+        Plan: sections.Plan.join("\n"),
+      },
+      diagnosis: extractDiagnosis(sections.Assessment.join("\n")),
+    });
+  }
+
+  return results;
 }
 
-// 保留原main函数作为模块自测试用
-async function localTest() {
-  const results = await parseSOAPFiles();
-  console.log('测试结果:', JSON.stringify(results, null, 2));
-}
-
+// 测试用
 if (require.main === module) {
-  localTest();
+  parseSOAPFiles()
+    .then((results) => console.log(JSON.stringify(results, null, 2)))
+    .catch((err) => console.error("解析失败:", err));
 }
