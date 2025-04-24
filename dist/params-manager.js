@@ -36,13 +36,6 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.ConfigLoader = void 0;
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
-const DEFAULT_CONFIG = {
-    llm: {
-        provider: 'ollama',
-        model: 'modelscope.cn/Qwen/Qwen2.5-1.5B-Instruct-GGUF:qwen2.5-1.5b-instruct-q4_k_m.gguf',
-        temperature: 0.7,
-    },
-};
 class ConfigLoader {
     static load(configPath) {
         const absolutePath = path.resolve(process.cwd(), configPath);
@@ -51,16 +44,16 @@ class ConfigLoader {
         }
         const rawConfig = JSON.parse(fs.readFileSync(absolutePath, 'utf-8'));
         return this.validateConfig({
-            ...DEFAULT_CONFIG,
             ...rawConfig,
         });
     }
     static validateConfig(config) {
+        var _a, _b;
         // 必需参数检查
-        if (!config.llm?.provider) {
+        if (!((_a = config.llm) === null || _a === void 0 ? void 0 : _a.provider)) {
             throw new Error('Missing required config: llm.provider');
         }
-        if (!config.llm?.model) {
+        if (!((_b = config.llm) === null || _b === void 0 ? void 0 : _b.model)) {
             throw new Error('Missing required config: llm.model');
         }
         // OpenRouter特殊检查

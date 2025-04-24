@@ -20,6 +20,23 @@ function getDocsDir(): string {
   return path.join(__dirname, "../docs");
 }
 
+function isWordFile(filePath: string): boolean {
+  // 检查文件扩展名
+  if (!/\.(doc|docx)$/i.test(path.basename(filePath))) {
+    return false;
+  }
+
+  // 检查文件头（magic number）
+  const docMagicNumber = Buffer.from([0xd0, 0xcf, 0x11, 0xe0]);
+  const docxMagicNumber = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
+  const buffer = fs.readFileSync(filePath, { encoding: null });
+
+  return (
+    buffer.slice(0, 4).toString() === docMagicNumber.toString() ||
+    buffer.slice(0, 4).toString() === docxMagicNumber.toString()
+  );
+}
+
 function parseSOAPText(text: string): Record<keyof SOAPNote, string[]> {
   // 定义所有可能的段落开始标记（支持多种格式）
   const sectionPatterns = [
@@ -77,33 +94,52 @@ function extractDiagnosis(text: string): string {
     /西医诊断[：:]\s*(.*?)(?=\n|$)/,
   ];
 
+  let diagnosis = "未明确诊断";
+
   for (const pattern of diagnosisPatterns) {
     const match = text.match(pattern);
-    if (match) return match[1].trim();
+    if (match) {
+      diagnosis = match[1].trim();
+      break;
+    }
   }
 
   // 尝试提取其他可能的诊断信息
-  const keywords = ["考虑", "印象", "初步意见"];
-  for (const keyword of keywords) {
-    const match = text.match(new RegExp(`${keyword}[：:](.*?)(?=\\n|$)`));
-    if (match) return match[1].trim();
+  if (diagnosis === "未明确诊断") {
+    const keywords = ["考虑", "印象", "初步意见"];
+    for (const keyword of keywords) {
+      const match = text.match(new RegExp(`${keyword}[：:](.*?)(?=\\n|$)`));
+      if (match) {
+        diagnosis = match[1].trim();
+        break;
+      }
+    }
   }
 
-  return "未明确诊断";
+  return diagnosis;
 }
 
 export async function parseSOAPFiles(): Promise<ParsedSOAPFile[]> {
   const docsDir = getDocsDir();
-  const files = fs.readdirSync(docsDir).filter((f) => /\.docx?$/i.test(f));
+  const files = fs.readdirSync(docsDir).filter((f) => /\.(doc|docx)$/i.test(f));
 
   if (files.length === 0) {
-    throw new Error("未找到任何.docx文件");
+    throw new Error(
+      "未在'docs'目录中找到任何有效的.docx文件。请确保该目录包含至少一个有效的.docx文件。"
+    );
   }
 
   const results: ParsedSOAPFile[] = [];
 
   for (const file of files) {
     const filePath = path.join(docsDir, file);
+
+    // 验证文件是否为有效的Word文件
+    if (!isWordFile(filePath)) {
+      console.warn(`跳过非Word文件: ${file}`);
+      continue;
+    }
+
     const { value: text } = await mammoth.extractRawText({ path: filePath });
     const sections = parseSOAPText(text);
 

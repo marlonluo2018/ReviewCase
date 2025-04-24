@@ -71,6 +71,7 @@ class LLMClient {
         }
     }
     async queryOpenRouter(prompt) {
+        var _a, _b;
         // 1. 初始化客户端（配置从类属性获取）
         const openai = new openai_1.OpenAI({
             baseURL: this.config.llm.baseUrl || 'https://openrouter.ai/api/v1',
@@ -96,7 +97,7 @@ class LLMClient {
                 // 其他可选参数...
             });
             // 4. 返回消息内容
-            return completion.choices[0]?.message?.content || '';
+            return ((_b = (_a = completion.choices[0]) === null || _a === void 0 ? void 0 : _a.message) === null || _b === void 0 ? void 0 : _b.content) || '';
         }
         catch (error) {
             console.error('OpenRouter请求失败:', error);
@@ -104,6 +105,7 @@ class LLMClient {
         }
     }
     async queryOllama(prompt) {
+        var _a;
         const ollama = new ollama_1.Ollama({ host: this.config.llm.baseUrl });
         const messages = [];
         if (this.currentSystemPrompt) {
@@ -118,7 +120,7 @@ class LLMClient {
                 num_predict: this.config.llm.maxTokens,
             },
         });
-        return response.message?.content || '';
+        return ((_a = response.message) === null || _a === void 0 ? void 0 : _a.content) || '';
     }
     async queryLMStudio(prompt) {
         const client = new sdk_1.LMStudioClient();
