@@ -20,44 +20,130 @@ function getDocsDir(): string {
   return path.join(__dirname, "../docs");
 }
 
-function isWordFile(filePath: string): boolean {
-  // 检查文件扩展名
-  if (!/\.(doc|docx)$/i.test(path.basename(filePath))) {
+async function convertToDocx(filePath: string): Promise<string> {
+  const newPath = filePath.replace(/\.(doc|DOC)$/i, ".docx");
+
+  try {
+    const libreoffice: {
+      convert: (
+        data: Buffer,
+        outputFormat: string,
+        callback: (err: Error | null, result: Buffer | null) => void
+      ) => void;
+    } = require("libreoffice-convert");
+    const data = await fs.promises.readFile(filePath);
+    const convertedData: Buffer = await new Promise<Buffer>(
+      (resolve, reject) => {
+        libreoffice.convert(
+          data,
+          ".docx",
+          (err: Error | null, result: Buffer | null) => {
+            if (err) reject(err);
+            else if (!result)
+              reject(new Error("Conversion returned null result"));
+            else resolve(result);
+          }
+        );
+      }
+    );
+
+    await fs.promises.writeFile(newPath, convertedData);
+    return newPath;
+  } catch (error) {
+    console.error(`使用libreoffice转换.doc文件到.docx失败: ${filePath}`, error);
+
+    // 回退方案：直接复制文件并修改扩展名
+    try {
+      const data = await fs.promises.readFile(filePath);
+      await fs.promises.writeFile(newPath, data);
+      console.log(`使用回退方案处理文件: ${filePath}`);
+      return newPath;
+    } catch (fallbackError) {
+      console.error(`回退方案处理文件失败: ${filePath}`, fallbackError);
+      throw new Error(`无法转换或复制文件: ${filePath}`);
+    }
+  }
+}
+
+async function isWordFile(filePath: string): Promise<boolean> {
+  try {
+    // 检查文件扩展名
+    if (!/\.(doc|docx)$/i.test(path.basename(filePath))) {
+      return false;
+    }
+
+    // 检查文件头（magic number）
+    const docMagicNumber = Buffer.from([0xd0, 0xcf, 0x11, 0xe0]);
+    const docxMagicNumber = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
+
+    // 检查文件是否存在
+    if (!fs.existsSync(filePath)) {
+      return false;
+    }
+
+    // 检查文件大小是否合理
+    const stats = fs.statSync(filePath);
+    if (stats.size < 4) {
+      return false;
+    }
+
+    const buffer = fs.readFileSync(filePath, { encoding: null });
+
+    // 更严格的格式验证
+    const isDoc = buffer.slice(0, 4).toString() === docMagicNumber.toString();
+    const isDocx = buffer.slice(0, 4).toString() === docxMagicNumber.toString();
+
+    // 检查文件是否损坏（针对.docx文件）
+    if (isDocx) {
+      try {
+        // 尝试解析ZIP结构（.docx实际上是ZIP文件）
+        const JSZip = require("jszip");
+        const zip = new JSZip();
+        await zip.loadAsync(buffer);
+
+        // 额外验证.docx文件的核心结构
+        const hasContentTypes = zip.file(/\[Content_Types\].xml/i).length > 0;
+        const hasWordFolder = zip.folder("word") !== null;
+
+        if (!hasContentTypes || !hasWordFolder) {
+          console.error(`检测到结构不完整的.docx文件: ${filePath}`);
+          return false;
+        }
+      } catch (error) {
+        const zipError = error as Error;
+        console.error(`检测到损坏的.docx文件: ${filePath}`, {
+          error: zipError.message,
+          fileSize: buffer.length,
+          magicNumber: buffer.slice(0, 4).toString("hex"),
+        });
+        return false;
+      }
+    }
+
+    if (!isDocx && isDoc) {
+      // 如果是.doc格式但非.docx，尝试转换
+      const convertedPath = await convertToDocx(filePath);
+      if (fs.existsSync(convertedPath)) {
+        return true;
+      }
+    }
+
+    return isDoc || isDocx;
+  } catch (error) {
+    console.error(`验证Word文件格式时出错: ${filePath}`, error);
     return false;
   }
-
-  // 检查文件头（magic number）
-  const docMagicNumber = Buffer.from([0xd0, 0xcf, 0x11, 0xe0]);
-  const docxMagicNumber = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
-  const buffer = fs.readFileSync(filePath, { encoding: null });
-
-  return (
-    buffer.slice(0, 4).toString() === docMagicNumber.toString() ||
-    buffer.slice(0, 4).toString() === docxMagicNumber.toString()
-  );
 }
 
 function parseSOAPText(text: string): Record<keyof SOAPNote, string[]> {
-  // 定义所有可能的段落开始标记（支持多种格式）
-  const sectionPatterns = [
-    {
-      regex:
-        /(主观资料S|S——|S\s*[:：])\s*(.*?)(?=(客观资料O|O——|O\s*[:：]|评价A|A——|A\s*[:：]|处置计划P|P——|P\s*[:：]|$))/s,
-      section: "Subjective" as const,
-    },
-    {
-      regex:
-        /(客观资料O|O——|O\s*[:：])\s*(.*?)(?=(评价A|A——|A\s*[:：]|处置计划P|P——|P\s*[:：]|$))/s,
-      section: "Objective" as const,
-    },
-    {
-      regex: /(评价A|A——|A\s*[:：])\s*(.*?)(?=(处置计划P|P——|P\s*[:：]|$))/s,
-      section: "Assessment" as const,
-    },
-    {
-      regex: /(处置计划P|P——|P\s*[:：])\s*(.*)/s,
-      section: "Plan" as const,
-    },
+  console.log("Original text:", text); // Debug log
+
+  // Define section headers in order of appearance
+  const SECTION_HEADERS = [
+    { pattern: /主观资料S\s*[\r\n]+/, name: "Subjective" },
+    { pattern: /客观资料O\s*[\r\n]+/, name: "Objective" },
+    { pattern: /评价A\s*[\r\n]+/, name: "Assessment" },
+    { pattern: /处置计划P\s*[\r\n]+/, name: "Plan" },
   ];
 
   const result = {
@@ -67,56 +153,66 @@ function parseSOAPText(text: string): Record<keyof SOAPNote, string[]> {
     Plan: [] as string[],
   };
 
-  // 处理文档开头可能没有标记的内容
-  const firstSectionMatch = text.match(
-    /^(.*?)(?=(主观资料S|S——|S\s*[:：]|客观资料O|O——|O\s*[:：]|评价A|A——|A\s*[:：]|处置计划P|P——|P\s*[:：]|$))/s
-  );
-  if (firstSectionMatch && firstSectionMatch[1].trim()) {
-    result.Subjective.push(firstSectionMatch[1].trim());
+  // Process document header before first section
+  const firstHeaderIndex = text.search(SECTION_HEADERS[0].pattern);
+  if (firstHeaderIndex > 0) {
+    const headerContent = text.substring(0, firstHeaderIndex).trim();
+    console.log("Document header:", headerContent);
+    result.Subjective.push(headerContent);
   }
 
-  // 使用正则表达式提取各段落内容
-  for (const { regex, section } of sectionPatterns) {
-    const match = text.match(regex);
-    if (match && match[2]) {
-      result[section].push(match[2].trim());
+  // Split text into sections
+  let remainingText = text;
+  for (let i = 0; i < SECTION_HEADERS.length; i++) {
+    const currentHeader = SECTION_HEADERS[i];
+    const nextHeader =
+      i < SECTION_HEADERS.length - 1 ? SECTION_HEADERS[i + 1] : null;
+
+    const headerMatch = remainingText.match(currentHeader.pattern);
+    if (!headerMatch) continue;
+
+    const contentStart = headerMatch.index! + headerMatch[0].length;
+    let contentEnd = remainingText.length;
+
+    if (nextHeader) {
+      const nextHeaderMatch = remainingText
+        .substring(contentStart)
+        .match(nextHeader.pattern);
+      if (nextHeaderMatch) {
+        contentEnd = contentStart + nextHeaderMatch.index!;
+      }
     }
+
+    const content = remainingText.substring(contentStart, contentEnd).trim();
+    if (content) {
+      console.log(`Found ${currentHeader.name} content:`, content);
+      const sectionName = currentHeader.name as keyof typeof result;
+      (result[sectionName] as string[]).push(content);
+    }
+
+    remainingText = remainingText.substring(contentEnd);
   }
 
+  console.log("Final parsed sections:", result);
   return result;
 }
 
 function extractDiagnosis(text: string): string {
-  // 尝试提取明确的诊断信息
+  // More robust diagnosis extraction
   const diagnosisPatterns = [
-    /诊断[：:]\s*(.*?)(?=\n|$)/,
-    /中医诊断[：:]\s*(.*?)(?=\n|$)/,
-    /西医诊断[：:]\s*(.*?)(?=\n|$)/,
+    /诊断[：:][\s]*[\r\n]+([\s\S]*?)(?=[\r\n]+(西医诊断|中医诊断|处置计划P|$))/,
+    /西医诊断[：:][\s]*[\r\n]+([\s\S]*?)(?=[\r\n]+(中医诊断|处置计划P|$))/,
+    /中医诊断[：:][\s]*[\r\n]+([\s\S]*?)(?=[\r\n]+(处置计划P|$))/,
   ];
-
-  let diagnosis = "未明确诊断";
 
   for (const pattern of diagnosisPatterns) {
     const match = text.match(pattern);
-    if (match) {
-      diagnosis = match[1].trim();
-      break;
+    if (match && match[1]) {
+      return match[1].trim().replace(/\s+/g, " ");
     }
   }
 
-  // 尝试提取其他可能的诊断信息
-  if (diagnosis === "未明确诊断") {
-    const keywords = ["考虑", "印象", "初步意见"];
-    for (const keyword of keywords) {
-      const match = text.match(new RegExp(`${keyword}[：:](.*?)(?=\\n|$)`));
-      if (match) {
-        diagnosis = match[1].trim();
-        break;
-      }
-    }
-  }
-
-  return diagnosis;
+  return "未明确诊断";
 }
 
 export async function parseSOAPFiles(): Promise<ParsedSOAPFile[]> {
@@ -135,7 +231,7 @@ export async function parseSOAPFiles(): Promise<ParsedSOAPFile[]> {
     const filePath = path.join(docsDir, file);
 
     // 验证文件是否为有效的Word文件
-    if (!isWordFile(filePath)) {
+    if (!(await isWordFile(filePath))) {
       console.warn(`跳过非Word文件: ${file}`);
       continue;
     }
